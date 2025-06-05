@@ -13,7 +13,10 @@ pub fn parse(file: std::fs::File) -> Result<HashMap<String, String>, String> {
             continue;
         }
 
-        let line = line.split('#').next().unwrap_or("");
+        let mut line = line.split('#').next().unwrap_or("");
+        if line.is_empty() {
+            line = line.split(';').next().unwrap_or("");
+        }
         let v: Vec<&str> = line.split('=').collect();
 
         // validation
@@ -61,10 +64,17 @@ mod tests {
         writeln!(file, "kernel.domainname = example.com").unwrap();
         writeln!(file, "; A value containing a space is written to the sysctl.").unwrap();
         writeln!(file, "kernel.modprobe = /sbin/mod probe").unwrap();
+        writeln!(file, "token1 = value1 # this is comment").unwrap();
+        writeln!(file, "token2 = value2 ; this is comment").unwrap();
+        writeln!(file, "token3 = value3 ;# this is comment").unwrap();
+        writeln!(file, "token4 = value4 #; this is comment").unwrap();
 
         let map = parse(std::fs::File::open(file.path()).unwrap()).unwrap();
         assert_eq!(map.get("kernel.domainname"), Some(&"example.com".to_string()));
         assert_eq!(map.get("kernel.modprobe"), Some(&"/sbin/mod probe".to_string()));
+        assert_eq!(map.get("token1"), Some(&"value1".to_string()));
+        assert_eq!(map.get("token2"), Some(&"value2".to_string()));
+        assert_eq!(map.get("token3"), Some(&"value3".to_string()));
         assert_eq!(map.len(), 2);
     }
 }
