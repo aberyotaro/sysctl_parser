@@ -1,23 +1,22 @@
 use {
+    std::fs::File,
+    std::io::BufReader,
     std::collections::HashMap,
     std::io::BufRead,
 };
 
-pub fn parse(file: std::fs::File) -> Result<HashMap<String, String>, String> {
+pub fn parse(file: File) -> Result<HashMap<String, String>, String> {
     let mut map = HashMap::new();
 
-    for (idx, line_result) in std::io::BufReader::new(file).lines().enumerate() {
+    for (idx, line_result) in BufReader::new(file).lines().enumerate() {
         let line = line_result.map_err(|e| format!("Failed to reading line {}: {}", idx + 1, e))?;
 
         if should_skip(&line) {
             continue;
         }
 
-        let mut line = line.split('#').next().unwrap_or("");
-        if line.is_empty() {
-            line = line.split(';').next().unwrap_or("");
-        }
-        let v: Vec<&str> = line.split('=').collect();
+        let kv_str = retrieve_key_value_str(&line);
+        let v: Vec<&str> = kv_str.split('=').collect();
 
         // validation
         if v.len() != 2 {
@@ -42,6 +41,13 @@ pub fn parse(file: std::fs::File) -> Result<HashMap<String, String>, String> {
     Ok(map)
 }
 
+fn retrieve_key_value_str(line: &str) -> &str {
+    if let Some(kv_str) = line.split('#').next() {
+        return kv_str.split(';').next().unwrap_or("");
+    }
+    line.split(';').next().unwrap_or("")
+}
+
 fn ignore_error(str: &str) -> bool {
     str.starts_with('-')
 }
@@ -53,9 +59,11 @@ fn should_skip(str: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
+    use {
+        super::*,
+        std::io::Write,
+        tempfile::NamedTempFile,
+    };
 
     #[test]
     fn test_parse() {
@@ -69,12 +77,12 @@ mod tests {
         writeln!(file, "token3 = value3 ;# this is comment").unwrap();
         writeln!(file, "token4 = value4 #; this is comment").unwrap();
 
-        let map = parse(std::fs::File::open(file.path()).unwrap()).unwrap();
+        let map = parse(File::open(file.path()).unwrap()).unwrap();
         assert_eq!(map.get("kernel.domainname"), Some(&"example.com".to_string()));
         assert_eq!(map.get("kernel.modprobe"), Some(&"/sbin/mod probe".to_string()));
         assert_eq!(map.get("token1"), Some(&"value1".to_string()));
         assert_eq!(map.get("token2"), Some(&"value2".to_string()));
         assert_eq!(map.get("token3"), Some(&"value3".to_string()));
-        assert_eq!(map.len(), 2);
+        assert_eq!(map.len(), 6);
     }
 }
