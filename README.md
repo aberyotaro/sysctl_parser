@@ -15,14 +15,10 @@ sysctl_parser = { git = "https://github.com/aberyotaro/sysctl_parser.git" }
 ## サンプルコード
 
 ```rust
-use {
-    std::fs::File,
-    sysctl_parser,
-};
-
 fn main() {
-    let file = File::open("etc/sysctl.conf").expect("Failed to open sysctl.conf");
-    match sysctl_parser::parse(file) {
+    let conf = File::open("etc/sysctl.conf").expect("Failed to open sysctl.conf");
+    let scheme = File::open("etc/scheme.conf").ok(); // Optional scheme file
+    match sysctl_parser::parse(conf, scheme) {
         Ok(map) => {
             for (key, value) in map {
                 println!("{} = {}", key, value);
@@ -31,5 +27,4 @@ fn main() {
         Err(e) => eprintln!("Error parsing sysctl.conf: {}", e),
     }
 }
-
 ```
