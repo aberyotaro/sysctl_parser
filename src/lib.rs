@@ -5,36 +5,45 @@ use {
     std::io::BufRead,
 };
 
+const CONF_MAX_VALUE_LENGTH: usize = 4096;
+
 pub fn parse(conf: File, scheme: Option<File>) -> Result<HashMap<String, String>, String> {
     let mut map = HashMap::new();
     for (idx, line_result) in BufReader::new(conf).lines().enumerate() {
         let line = line_result.map_err(|e| format!("Failed to reading line {}: {}", idx + 1, e))?;
 
-        if should_skip(&line) {
+        if skip_line(&line) {
             continue;
         }
 
         let kv_str = retrieve_key_value_str(&line);
-        let v: Vec<&str> = kv_str.split('=').collect();
+        let kv: Vec<&str> = kv_str.split('=').collect();
+        let k = kv[0].trim();
+        let v = kv[1].trim();
 
         // validation
-        if v.len() != 2 {
-            if ignore_error(&line) {
-                continue;
+        {
+            if kv.len() != 2 {
+                if ignore_error(&line) {
+                    continue;
+                }
+                return Err(format!("Invalid conf line format at line {}: {}", idx + 1, line));
             }
-            return Err(format!("Invalid conf line format at line {}: {}", idx + 1, line));
+            if v.len() > CONF_MAX_VALUE_LENGTH {
+                if ignore_error(&line) {
+                    continue;
+                }
+                return Err(format!("Invalid conf value length at line {}: {}", idx + 1, line));
+            }
+            if k.contains(" ") || k.contains("\t") || k.contains("　") {
+                if ignore_error(&line) {
+                    continue;
+                }
+                return Err(format!("Invalid conf space contains at line {}: {}", idx + 1, line));
+            }
         }
 
-        let key = v[0].trim();
-        let value = v[1].trim();
-        if key.contains(" ") || key.contains("\t") || key.contains("　") {
-            if ignore_error(&line) {
-                continue;
-            }
-            return Err(format!("Invalid conf space contains at line {}: {}", idx + 1, line));
-        }
-
-        map.insert(key.to_string(), value.to_string());
+        map.insert(k.to_string(), v.to_string());
     }
 
     // verification by scheme
@@ -42,7 +51,7 @@ pub fn parse(conf: File, scheme: Option<File>) -> Result<HashMap<String, String>
         for (idx, line_result) in BufReader::new(scheme_file).lines().enumerate() {
             let line = line_result.map_err(|e| format!("Failed to reading scheme line {}: {}", idx + 1, e))?;
 
-            if should_skip(&line) {
+            if skip_line(&line) {
                 continue;
             }
 
@@ -90,7 +99,7 @@ fn ignore_error(str: &str) -> bool {
     str.starts_with('-')
 }
 
-fn should_skip(str: &str) -> bool {
+fn skip_line(str: &str) -> bool {
     str.is_empty() || str.starts_with('#') || str.starts_with(';')
 }
 
@@ -123,7 +132,7 @@ mod tests {
         assert_eq!(map.get("token3"), Some(&"value3".to_string()));
         assert_eq!(map.len(), 6);
     }
-    
+
     #[test]
     fn test_parse_with_scheme() {
         let mut conf_file = NamedTempFile::new().unwrap();
