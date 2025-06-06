@@ -1,3 +1,6 @@
+mod constant;
+mod tests;
+
 use {
     std::fs::File,
     std::io::BufReader,
@@ -5,12 +8,10 @@ use {
     std::io::BufRead,
 };
 
-const CONF_MAX_VALUE_LENGTH: usize = 4096;
-
 pub fn parse(conf: File, scheme: Option<File>) -> Result<HashMap<String, String>, String> {
     let mut map = HashMap::new();
     for (idx, line_result) in BufReader::new(conf).lines().enumerate() {
-        let line = line_result.map_err(|e| format!("Failed to reading line {}: {}", idx + 1, e))?;
+        let line = line_result.map_err(|e| format!("[conf]: Failed to reading line {}: {}", idx + 1, e))?;
 
         if skip_line(&line) {
             continue;
@@ -27,19 +28,19 @@ pub fn parse(conf: File, scheme: Option<File>) -> Result<HashMap<String, String>
                 if ignore_error(&line) {
                     continue;
                 }
-                return Err(format!("Invalid conf line format at line {}: {}", idx + 1, line));
+                return Err(format!("[conf]: Invalid format at line {}: {}", idx + 1, line));
             }
-            if v.len() > CONF_MAX_VALUE_LENGTH {
+            if v.len() > constant::CONF_MAX_VALUE_LENGTH {
                 if ignore_error(&line) {
                     continue;
                 }
-                return Err(format!("Invalid conf value length at line {}: {}", idx + 1, line));
+                return Err(format!("[conf]: Exceeds maximum length of {} at line {}: {}", constant::CONF_MAX_VALUE_LENGTH, idx + 1, line));
             }
             if k.contains(" ") || k.contains("\t") || k.contains("　") {
                 if ignore_error(&line) {
                     continue;
                 }
-                return Err(format!("Invalid conf space contains at line {}: {}", idx + 1, line));
+                return Err(format!("[conf]: Invalid space contains at line {}: {}", idx + 1, line));
             }
         }
 
@@ -49,7 +50,7 @@ pub fn parse(conf: File, scheme: Option<File>) -> Result<HashMap<String, String>
     // verification by scheme
     if let Some(scheme_file) = scheme {
         for (idx, line_result) in BufReader::new(scheme_file).lines().enumerate() {
-            let line = line_result.map_err(|e| format!("Failed to reading scheme line {}: {}", idx + 1, e))?;
+            let line = line_result.map_err(|e| format!("[scheme]: Failed to reading scheme line {}: {}", idx + 1, e))?;
 
             if skip_line(&line) {
                 continue;
@@ -59,16 +60,16 @@ pub fn parse(conf: File, scheme: Option<File>) -> Result<HashMap<String, String>
             let v: Vec<&str> = kv_str.split("->").collect();
 
             if v.len() != 2 {
-                return Err(format!("Invalid scheme line format at line {}: {}", idx + 1, line));
+                return Err(format!("[scheme]: Invalid format at line {}: {}", idx + 1, line));
             }
 
             let scheme_key = v[0].trim();
             let scheme_value = v[1].trim();
 
-            let conf_val = map.get(scheme_key);
-            if let Some(v) = conf_val {
-                if !validate_type(scheme_value, v) {
-                    return Err(format!("Invalid scheme line format at line {}: {}", idx + 1, line));
+            let conf_value = map.get(scheme_key);
+            if let Some(cv) = conf_value {
+                if !validate_type(scheme_value, cv) {
+                    return Err(format!("[conf/scheme]: Does not match the type specified in the schema {}: {}", idx + 1, line));
                 }
             }
         }
@@ -79,11 +80,11 @@ pub fn parse(conf: File, scheme: Option<File>) -> Result<HashMap<String, String>
 
 fn validate_type(type_str: &str, value: &str) -> bool {
     match type_str {
-        "string" => value.parse::<String>().is_ok(),
-        "bool" => value.parse::<bool>().is_ok(),
-        "int" => value.parse::<i32>().is_ok(),
-        "uint" => value.parse::<u32>().is_ok(),
-        "float" => value.parse::<f64>().is_ok(),
+        constant::CONF_TYPE_STRING => value.parse::<String>().is_ok(),
+        constant::CONF_TYPE_BOOL => value.parse::<bool>().is_ok(),
+        constant::CONF_TYPE_INT => value.parse::<i32>().is_ok(),
+        constant::CONF_TYPE_UINT => value.parse::<u32>().is_ok(),
+        constant::CONF_TYPE_FLOAT => value.parse::<f64>().is_ok(),
         _ => false,
     }
 }
@@ -104,66 +105,3 @@ fn skip_line(str: &str) -> bool {
 }
 
 
-#[cfg(test)]
-mod tests {
-    use {
-        super::*,
-        std::io::Write,
-        tempfile::NamedTempFile,
-    };
-
-    #[test]
-    fn test_parse() {
-        let mut file = NamedTempFile::new().unwrap();
-        writeln!(file, "#").unwrap();
-        writeln!(file, "kernel.domainname = example.com").unwrap();
-        writeln!(file, "; A value containing a space is written to the sysctl.").unwrap();
-        writeln!(file, "kernel.modprobe = /sbin/mod probe").unwrap();
-        writeln!(file, "token1 = value1 # this is comment").unwrap();
-        writeln!(file, "token2 = value2 ; this is comment").unwrap();
-        writeln!(file, "token3 = value3 ;# this is comment").unwrap();
-        writeln!(file, "token4 = value4 #; this is comment").unwrap();
-
-        let map = parse(File::open(file.path()).unwrap(), None).unwrap();
-        assert_eq!(map.get("kernel.domainname"), Some(&"example.com".to_string()));
-        assert_eq!(map.get("kernel.modprobe"), Some(&"/sbin/mod probe".to_string()));
-        assert_eq!(map.get("token1"), Some(&"value1".to_string()));
-        assert_eq!(map.get("token2"), Some(&"value2".to_string()));
-        assert_eq!(map.get("token3"), Some(&"value3".to_string()));
-        assert_eq!(map.len(), 6);
-    }
-
-    #[test]
-    fn test_parse_with_scheme() {
-        let mut conf_file = NamedTempFile::new().unwrap();
-        writeln!(conf_file, "kernel.domainname = example.com").unwrap();
-        writeln!(conf_file, "kernel.modprobe = /sbin/mod probe").unwrap();
-        writeln!(conf_file, "param_string = this is string").unwrap();
-        writeln!(conf_file, "param_bool = true").unwrap();
-        writeln!(conf_file, "param_int = -12345").unwrap();
-        writeln!(conf_file, "param_uint = 12345").unwrap();
-        writeln!(conf_file, "param_float = 0.12345").unwrap();
-
-        let mut scheme_file = NamedTempFile::new().unwrap();
-        writeln!(scheme_file, "kernel.domainname -> string").unwrap();
-        writeln!(scheme_file, "kernel.modprobe -> string").unwrap();
-        writeln!(scheme_file, "param_string -> string").unwrap();
-        writeln!(scheme_file, "param_bool -> bool").unwrap();
-        writeln!(scheme_file, "param_int -> int").unwrap();
-        writeln!(scheme_file, "param_uint -> uint").unwrap();
-        writeln!(scheme_file, "param_float -> float").unwrap();
-
-        let map = parse(
-            File::open(conf_file.path()).unwrap(),
-            Some(File::open(scheme_file.path()).unwrap())
-        ).unwrap();
-        assert_eq!(map.get("kernel.domainname"), Some(&"example.com".to_string()));
-        assert_eq!(map.get("kernel.modprobe"), Some(&"/sbin/mod probe".to_string()));
-        assert_eq!(map.get("param_string"), Some(&"this is string".to_string()));
-        assert_eq!(map.get("param_bool"), Some(&"true".to_string()));
-        assert_eq!(map.get("param_int"), Some(&"-12345".to_string()));
-        assert_eq!(map.get("param_uint"), Some(&"12345".to_string()));
-        assert_eq!(map.get("param_float"), Some(&"0.12345".to_string()));
-        assert_eq!(map.len(), 7);
-    }
-}
